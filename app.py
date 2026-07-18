@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import pickle
-from sklearn.metrics.pairwise import cosine_similarity
-import time
+import requests
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
+from sklearn.metrics.pairwise import cosine_similarity
+
+# ==========================================================
+# PAGE CONFIGURATION
+# ==========================================================
+
 st.set_page_config(
     page_title="Movie Recommendation AI",
     page_icon="🎬",
@@ -15,13 +16,27 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# -----------------------------
+# ==========================================================
+# TMDB API KEY
+# Replace this with your own key
+# ==========================================================
+
+API_KEY = "a4dac9957dc0d8f5a743d826a47d4015"
+
+IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
+
+# ==========================================================
 # LOAD DATA
-# -----------------------------
+# ==========================================================
+
 @st.cache_resource
-def load_data():
-    movies = pickle.load(open("movies.pkl", "rb"))
-    vectorizer = pickle.load(open("vectorizer.pkl", "rb"))
+def load_model():
+
+    with open("movies.pkl", "rb") as file:
+        movies = pickle.load(file)
+
+    with open("vectorizer.pkl", "rb") as file:
+        vectorizer = pickle.load(file)
 
     vectors = vectorizer.transform(movies["tags"])
 
@@ -29,948 +44,785 @@ def load_data():
 
     return movies, similarity
 
-movies, similarity = load_data()
+movies, similarity = load_model()
 
-# -----------------------------
-# THEMES
-# -----------------------------
+# ==========================================================
+# FETCH MOVIE DETAILS FROM TMDB
+# ==========================================================
 
-themes = {
+@st.cache_data(show_spinner=False)
+def fetch_movie_details(movie_name):
+
+    url = (
+        f"https://api.themoviedb.org/3/search/movie"
+        f"?api_key={API_KEY}&query={movie_name}"
+    )
+
+    try:
+
+        response = requests.get(url, timeout=10)
+
+        data = response.json()
+
+        if not data.get("results"):
+
+            return {
+                "poster": "https://placehold.co/500x750?text=No+Poster",
+                "rating": "N/A",
+                "year": "----",
+                "overview": "Overview not available.",
+                "language": "-",
+                "popularity": "-",
+                "genres": "Unknown"
+            }
+
+        movie = data["results"][0]
+
+        poster_path = movie.get("poster_path")
+
+        if poster_path:
+            poster = IMAGE_BASE_URL + poster_path
+        else:
+            poster = "https://placehold.co/500x750?text=No+Poster"
+
+        release_date = movie.get("release_date", "")
+
+        if release_date:
+            year = release_date[:4]
+        else:
+            year = "----"
+
+        genre_map = {
+
+            28: "Action",
+            12: "Adventure",
+            16: "Animation",
+            35: "Comedy",
+            80: "Crime",
+            99: "Documentary",
+            18: "Drama",
+            10751: "Family",
+            14: "Fantasy",
+            36: "History",
+            27: "Horror",
+            10402: "Music",
+            9648: "Mystery",
+            10749: "Romance",
+            878: "Sci-Fi",
+            53: "Thriller",
+            10752: "War"
+
+        }
+
+        genres = []
+
+        for gid in movie.get("genre_ids", []):
+
+            if gid in genre_map:
+                genres.append(genre_map[gid])
+
+        return {
+
+            "poster": poster,
+            "rating": round(movie.get("vote_average", 0), 1),
+            "year": year,
+            "overview": movie.get(
+                "overview",
+                "Overview not available."
+            ),
+            "language": movie.get(
+                "original_language",
+                "-"
+            ).upper(),
+            "popularity": round(
+                movie.get("popularity", 0),
+                1
+            ),
+            "genres": ", ".join(genres)
+
+        }
+
+    except Exception:
+
+        return {
+
+            "poster": "https://placehold.co/500x750?text=Error",
+            "rating": "-",
+            "year": "-",
+            "overview": "Unable to fetch movie details.",
+            "language": "-",
+            "popularity": "-",
+            "genres": "-"
+
+        }
+
+# ==========================================================
+# RECOMMENDATION FUNCTION
+# ==========================================================
+
+def recommend(movie):
+
+    index = movies[movies["title"] == movie].index[0]
+
+    distances = similarity[index]
+
+    movie_list = sorted(
+
+        list(enumerate(distances)),
+        reverse=True,
+        key=lambda x: x[1]
+
+    )[1:7]
+
+    recommendations = []
+
+    for item in movie_list:
+
+        title = movies.iloc[item[0]].title
+
+        info = fetch_movie_details(title)
+
+        recommendations.append({
+
+            "title": title,
+            "poster": info["poster"],
+            "rating": info["rating"],
+            "year": info["year"],
+            "overview": info["overview"],
+            "genres": info["genres"],
+            "language": info["language"],
+            "popularity": info["popularity"]
+
+        })
+
+    return recommendations
+
+# ==========================================================
+# THEME OPTIONS
+# ==========================================================
+
+THEMES = {
 
     "Netflix": {
-        "bg":"#0f0f0f",
-        "card":"#181818",
-        "text":"white",
-        "accent":"#E50914",
-        "secondary":"#2d2d2d"
+
+        "background": "#0B0B0B",
+        "card": "#171717",
+        "text": "#FFFFFF",
+        "accent": "#E50914"
+
     },
 
-    "Light": {
-        "bg":"#f5f5f5",
-        "card":"white",
-        "text":"black",
-        "accent":"#1976D2",
-        "secondary":"#ECECEC"
+    "Dark Blue": {
+
+        "background": "#06141B",
+        "card": "#11212D",
+        "text": "#FFFFFF",
+        "accent": "#4DA8DA"
+
     },
 
     "Cyberpunk": {
-        "bg":"#080014",
-        "card":"#16002B",
-        "text":"#00FFF7",
-        "accent":"#FF00AA",
-        "secondary":"#1B0035"
+
+        "background": "#0A001F",
+        "card": "#1A0038",
+        "text": "#FFFFFF",
+        "accent": "#FF00AA"
+
     },
 
-    "Solarpunk": {
-        "bg":"#F6FFF2",
-        "card":"#FFFFFF",
-        "text":"#1E4620",
-        "accent":"#52B788",
-        "secondary":"#D8F3DC"
-    },
+    "Light": {
 
-    "Fantasy": {
-        "bg":"#15092E",
-        "card":"#231942",
-        "text":"#F4F1DE",
-        "accent":"#C77DFF",
-        "secondary":"#3C096C"
-    },
+        "background": "#F5F5F5",
+        "card": "#FFFFFF",
+        "text": "#000000",
+        "accent": "#2563EB"
 
-    "Medieval": {
-        "bg":"#2F241F",
-        "card":"#4A3B31",
-        "text":"#F8F0E3",
-        "accent":"#C89B3C",
-        "secondary":"#6F4E37"
-    },
-
-    "Minimalist": {
-        "bg":"white",
-        "card":"#F7F7F7",
-        "text":"#222222",
-        "accent":"black",
-        "secondary":"#DDDDDD"
     }
 
 }
 
-# -----------------------------
-# SIDEBAR
-# -----------------------------
+selected_theme = st.sidebar.selectbox(
 
-st.sidebar.title("🎬 Movie Recommendation")
+    "🎨 Theme",
+
+    list(THEMES.keys())
+
+)
+
+theme = THEMES[selected_theme]
+# ==========================================================
+# SIDEBAR
+# ==========================================================
 
 st.sidebar.markdown("---")
 
-st.sidebar.markdown("## 👨‍💻 Developed By")
+st.sidebar.title("🎬 Movie Recommendation AI")
 
 st.sidebar.markdown(
 """
-### **Gaurav Warkhede**
-AI & Machine Learning Engineer
+Discover amazing movies using
+AI-powered recommendations.
 """
 )
 
 st.sidebar.markdown("---")
 
-theme = st.sidebar.selectbox(
-    "🎨 Select Theme",
-    list(themes.keys())
+st.sidebar.subheader("📊 Dataset")
+
+st.sidebar.metric(
+    "Movies",
+    f"{len(movies):,}"
 )
 
-colors = themes[theme]
+st.sidebar.metric(
+    "Recommendations",
+    "6"
+)
+
+st.sidebar.metric(
+    "Algorithm",
+    "Cosine Similarity"
+)
 
 st.sidebar.markdown("---")
 
-st.sidebar.info(
+st.sidebar.subheader("⚙ Tech Stack")
+
+st.sidebar.markdown("""
+- Python
+- Streamlit
+- NLP
+- CountVectorizer
+- Scikit-Learn
+- TMDB API
+""")
+
+st.sidebar.markdown("---")
+
+st.sidebar.success(
 """
-### Version 1.0
+👨‍💻 Developed by
 
-Premium UI
-
-Streamlit
-
-Machine Learning
-
-Scikit-Learn
+**Gaurav Warkhede**
 """
 )
 
-# -----------------------------
-# PREMIUM CSS
-# -----------------------------
+# ==========================================================
+# CSS
+# ==========================================================
 
-st.markdown(f"""
-
+st.markdown(
+f"""
 <style>
 
-html,
-body,
-[data-testid="stAppViewContainer"]{{
-background:{colors['bg']};
-color:{colors['text']};
+.stApp{{
+background:{theme['background']};
+color:{theme['text']};
+}}
+
+header{{
+visibility:hidden;
+}}
+
+footer{{
+visibility:hidden;
 }}
 
 section[data-testid="stSidebar"]{{
-background:{colors['card']};
-}}
-
-h1,h2,h3,h4,h5,p,span,div{{
-color:{colors['text']};
+background:{theme['card']};
 }}
 
 .main-title{{
 font-size:60px;
-font-weight:900;
+font-weight:800;
 text-align:center;
-margin-top:20px;
-animation:fade 1.5s;
+margin-top:10px;
+color:{theme['text']};
 }}
 
 .sub-title{{
-font-size:22px;
 text-align:center;
-opacity:.8;
-margin-bottom:40px;
+font-size:22px;
+opacity:0.8;
+margin-bottom:30px;
 }}
 
-.glass{{
-background:rgba(255,255,255,.05);
-padding:30px;
-border-radius:20px;
-backdrop-filter:blur(15px);
-border:1px solid rgba(255,255,255,.12);
+.hero{{
+background:linear-gradient(
+135deg,
+{theme['accent']},
+{theme['card']}
+);
+
+padding:45px;
+border-radius:22px;
+margin-bottom:30px;
+
+box-shadow:0px 12px 35px rgba(0,0,0,.35);
+}}
+
+.hero h1{{
+color:white;
+font-size:52px;
+font-weight:800;
+}}
+
+.hero p{{
+color:white;
+font-size:19px;
+}}
+
+.stats{{
+background:{theme['card']};
+padding:22px;
+border-radius:18px;
+text-align:center;
+box-shadow:0px 8px 20px rgba(0,0,0,.25);
+}}
+
+.stats h2{{
+color:{theme['accent']};
+}}
+
+.stats h4{{
+color:{theme['text']};
 }}
 
 .movie-card{{
-background:{colors['card']};
-padding:20px;
-border-radius:20px;
-transition:.4s;
-text-align:center;
-box-shadow:0 10px 30px rgba(0,0,0,.25);
+background:{theme['card']};
+padding:15px;
+border-radius:18px;
+transition:0.3s;
 }}
 
 .movie-card:hover{{
-transform:translateY(-8px) scale(1.02);
-box-shadow:0 20px 50px rgba(0,0,0,.45);
+transform:translateY(-8px);
 }}
 
 .stButton>button{{
-background:{colors['accent']};
+width:100%;
+background:{theme['accent']};
 color:white;
+border:none;
+padding:15px;
 font-size:18px;
 font-weight:bold;
-border:none;
 border-radius:12px;
-padding:14px 30px;
-transition:.3s;
 }}
 
 .stButton>button:hover{{
-transform:scale(1.05);
+transform:scale(1.02);
 }}
 
-.footer{{
-text-align:center;
-margin-top:70px;
-padding:25px;
-opacity:.7;
-}}
-
-@keyframes fade{{
-from{{
-opacity:0;
-transform:translateY(-25px);
-}}
-
-to{{
-opacity:1;
-transform:translateY(0px);
-}}
+img{{
+border-radius:15px;
 }}
 
 </style>
-
-""", unsafe_allow_html=True)
-
-# -----------------------------
-# HEADER
-# -----------------------------
-
-st.markdown(
-"""
-<div class="main-title">
-🎬 Movie Recommendation AI
-</div>
 """,
 unsafe_allow_html=True
 )
-
-st.markdown(
-"""
-<div class="sub-title">
-Discover Your Next Favorite Movie with Artificial Intelligence
-</div>
-""",
-unsafe_allow_html=True
-)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# -----------------------------
-# RECOMMEND FUNCTION
-# -----------------------------
-
-def recommend(movie):
-
-    movie_index = movies[movies["title"] == movie].index[0]
-
-    distances = similarity[movie_index]
-
-    movie_list = sorted(
-        list(enumerate(distances)),
-        reverse=True,
-        key=lambda x:x[1]
-    )[1:6]
-
-    names = []
-
-    for i in movie_list:
-        names.append(movies.iloc[i[0]].title)
-
-    return names
 
 # ==========================================================
 # HERO SECTION
 # ==========================================================
 
 st.markdown(
-    f"""
-    <div class="glass">
-        <h2 style="text-align:center;font-size:38px;">
-            🍿 AI Powered Movie Discovery
-        </h2>
+"""
+<div class="hero">
 
-        <p style="text-align:center;font-size:18px;">
-        Search for a movie you love and discover similar movies instantly.
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+<h1>🎬 Movie Recommendation AI</h1>
+
+<p>
+
+Find movies you'll love using
+Natural Language Processing,
+Machine Learning and TMDB.
+
+</p>
+
+</div>
+""",
+unsafe_allow_html=True
 )
 
-st.write("")
-st.write("")
-
 # ==========================================================
-# SEARCH BAR
-# ==========================================================
-
-movie_list = sorted(movies["title"].unique())
-
-selected_movie = st.selectbox(
-    "🔍 Search Movie",
-    movie_list,
-    help="Search your favourite movie",
-)
-
-st.write("")
-
-recommend_btn = st.button(
-    "🚀 Recommend Movies",
-    use_container_width=True,
-)
-
-st.write("")
-
-# ==========================================================
-# LOADING
-# ==========================================================
-
-if recommend_btn:
-
-    progress = st.progress(0)
-
-    with st.spinner("Finding similar movies..."):
-
-        for i in range(100):
-            time.sleep(0.01)
-            progress.progress(i + 1)
-
-    progress.empty()
-
-    recommendations = recommend(selected_movie)
-
-    st.markdown(
-        """
-        <h2 style='text-align:center;'>
-        🎬 Top Recommendations
-        </h2>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.write("")
-
-    cols = st.columns(5)
-
-    for idx, movie in enumerate(recommendations):
-
-        rating = round(np.random.uniform(7.0, 9.8), 1)
-
-        year = np.random.randint(1995, 2025)
-
-        genres = np.random.choice(
-            [
-                "Action",
-                "Drama",
-                "Adventure",
-                "Comedy",
-                "Fantasy",
-                "Sci-Fi",
-                "Thriller",
-                "Crime",
-            ],
-            2,
-            replace=False,
-        )
-
-        with cols[idx]:
-
-            st.markdown(
-                f"""
-                <div class="movie-card">
-
-                <img
-                src="https://placehold.co/300x450?text=Movie+Poster"
-                width="100%"
-                style="border-radius:15px;">
-
-                <br><br>
-
-                <h4>{movie}</h4>
-
-                ⭐ {rating}/10
-
-                <br><br>
-
-                📅 {year}
-
-                <br><br>
-
-                🎭 {genres[0]} | {genres[1]}
-
-                <br><br>
-
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-# ==========================================================
-# ABOUT SECTION
-# ==========================================================
-
-st.write("")
-st.write("")
-st.write("")
-
-st.markdown(
-    """
-    ## 🎯 About this Project
-
-    This Movie Recommendation System uses **Natural Language Processing (NLP)**
-    and **Cosine Similarity** to recommend movies similar to the one selected
-    by the user.
-
-    ### Technologies Used
-
-    - Python
-    - Streamlit
-    - Scikit-Learn
-    - NLP
-    - CountVectorizer
-    - Cosine Similarity
-    """,
-)
-
-st.write("")
-st.write("")
-
-# ==========================================================
-# PROJECT STATS
+# DASHBOARD
 # ==========================================================
 
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    st.metric("🎬 Movies", len(movies))
+
+    st.markdown(
+    f"""
+    <div class="stats">
+    <h2>{len(movies)}</h2>
+    <h4>Total Movies</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+    )
 
 with c2:
-    st.metric("🧠 Model", "NLP")
+
+    st.markdown(
+    """
+    <div class="stats">
+    <h2>5000</h2>
+    <h4>Vocabulary Size</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+    )
 
 with c3:
-    st.metric("⚡ Response", "<1 sec")
+
+    st.markdown(
+    """
+    <div class="stats">
+    <h2>6</h2>
+    <h4>Recommendations</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+    )
 
 with c4:
-    st.metric("⭐ Version", "1.0")
+
+    st.markdown(
+    """
+    <div class="stats">
+    <h2>AI</h2>
+    <h4>Powered</h4>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 st.write("")
+
+# ==========================================================
+# SEARCH SECTION
+# ==========================================================
+
+st.markdown(
+"## 🔍 Search Your Favourite Movie"
+)
+
+selected_movie = st.selectbox(
+
+    "",
+
+    sorted(movies["title"].unique())
+
+)
+
+recommend_button = st.button(
+    "🎥 Recommend Movies"
+)
+
 st.write("")
+# ==========================================================
+# RECOMMENDATION SECTION
+# ==========================================================
+
+if recommend_button:
+
+    with st.spinner("Finding the best movies for you..."):
+
+        recommendations = recommend(selected_movie)
+
+    st.success(f"Top recommendations based on **{selected_movie}**")
+
+    st.write("")
+
+    cols = st.columns(3)
+
+    for index, movie in enumerate(recommendations):
+
+        with cols[index % 3]:
+
+            st.markdown(
+                f"""
+                <div class="movie-card">
+                """,
+                unsafe_allow_html=True
+            )
+
+            st.image(
+                movie["poster"],
+                use_container_width=True
+            )
+
+            st.markdown(
+                f"### 🎬 {movie['title']}"
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.metric(
+                    "⭐ Rating",
+                    movie["rating"]
+                )
+
+            with col2:
+                st.metric(
+                    "📅 Year",
+                    movie["year"]
+                )
+
+            st.markdown(
+                f"**🎭 Genre:** {movie['genres']}"
+            )
+
+            st.markdown(
+                f"**🌍 Language:** {movie['language']}"
+            )
+
+            st.markdown(
+                f"**🔥 Popularity:** {movie['popularity']}"
+            )
+
+            with st.expander("📖 Overview"):
+
+                st.write(movie["overview"])
+
+            st.markdown(
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+    st.write("")
+    st.divider()
+
+# ==========================================================
+# FEATURED MOVIES
+# ==========================================================
+
+st.markdown("## 🍿 Popular Movies To Try")
+
+featured = [
+    "Avatar",
+    "The Dark Knight",
+    "Inception",
+    "Interstellar",
+    "Titanic",
+    "The Avengers"
+]
+
+feature_cols = st.columns(3)
+
+for i, name in enumerate(featured):
+
+    info = fetch_movie_details(name)
+
+    with feature_cols[i % 3]:
+
+        st.image(
+            info["poster"],
+            use_container_width=True
+        )
+
+        st.markdown(f"### {name}")
+
+        st.write(f"⭐ {info['rating']}")
+
+        st.write(f"📅 {info['year']}")
+
+        st.write(info["genres"])
+
 st.write("")
+st.divider()
+
+# ==========================================================
+# PROJECT INFORMATION
+# ==========================================================
+
+st.markdown("## 🚀 How It Works")
+
+step1, step2, step3 = st.columns(3)
+
+with step1:
+
+    st.info("""
+### 1️⃣ NLP
+
+Movie overviews, genres,
+cast and keywords are
+combined into one text.
+""")
+
+with step2:
+
+    st.info("""
+### 2️⃣ Vectorization
+
+CountVectorizer converts
+text into numerical vectors.
+""")
+
+with step3:
+
+    st.info("""
+### 3️⃣ Recommendation
+
+Cosine Similarity finds
+movies with similar content.
+""")
+
+st.write("")
+
+# ==========================================================
+# ABOUT PROJECT
+# ==========================================================
+
+st.divider()
+
+st.markdown("# 📖 About This Project")
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+
+    st.markdown("""
+This **Movie Recommendation AI** recommends movies based on their similarity using
+Natural Language Processing.
+
+### Machine Learning Pipeline
+
+- Merge Movie & Credits datasets
+- Data Cleaning
+- Feature Engineering
+- Stemming
+- CountVectorizer
+- Cosine Similarity
+- TMDB API Integration
+- Streamlit Deployment
+
+The recommendation engine analyzes the movie's **overview, genres, keywords, cast, and director**
+to find similar movies.
+""")
+
+with col2:
+
+    st.metric("Dataset Size", f"{len(movies):,}")
+
+    st.metric("Recommendation Model", "Content-Based")
+
+    st.metric("Framework", "Streamlit")
+
+    st.metric("Language", "Python")
+
+# ==========================================================
+# PROJECT FEATURES
+# ==========================================================
+
+st.divider()
+
+st.markdown("# ✨ Features")
+
+feature1, feature2, feature3 = st.columns(3)
+
+with feature1:
+
+    st.success("""
+✅ NLP
+
+✅ CountVectorizer
+
+✅ Cosine Similarity
+
+✅ Streamlit
+""")
+
+with feature2:
+
+    st.success("""
+✅ Movie Posters
+
+✅ Ratings
+
+✅ Genres
+
+✅ Overview
+""")
+
+with feature3:
+
+    st.success("""
+✅ TMDB API
+
+✅ Multiple Themes
+
+✅ Fast Caching
+
+✅ Responsive UI
+""")
+
+# ==========================================================
+# MOVIE RECOMMENDATION TIPS
+# ==========================================================
+
+st.divider()
+
+st.markdown("# 💡 Recommendation Tips")
+
+st.info("""
+• Search for any famous movie.
+
+• Movies with rich descriptions usually produce better recommendations.
+
+• If posters don't appear, check your TMDB API key.
+
+• The first recommendation is intentionally skipped because it is the selected movie itself.
+""")
 
 # ==========================================================
 # FOOTER
 # ==========================================================
 
-st.markdown(
-    """
-    <div class="footer">
+st.divider()
 
-    <hr>
-
-    <h3>🎬 Movie Recommendation AI</h3>
-
-    Developed with ❤️ using Streamlit & Machine Learning
-
-    <br><br>
-
-    <strong>Developed By</strong>
-
-    <br>
-
-    <h2>GAURAV WARKHEDE</h2>
-
-    <br>
-
-    Version 1.0
-
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ==========================================================
-# FEATURE SECTION
-# ==========================================================
-
-st.write("")
-st.write("")
-st.write("")
+current_year = "2026"
 
 st.markdown(
-"""
-<h2 style='text-align:center;'>
-✨ Why Use Movie Recommendation AI?
-</h2>
-""",
-unsafe_allow_html=True
-)
+f"""
+<div style="text-align:center;padding:20px;">
 
-feature1,feature2,feature3=st.columns(3)
+<h3>🎬 Movie Recommendation AI</h3>
 
-with feature1:
+<p>
+Built using ❤️ with
+<b>Python</b>,
+<b>Streamlit</b>,
+<b>Scikit-Learn</b>,
+<b>NLP</b>,
+and
+<b>TMDB API</b>
+</p>
 
-    st.markdown("""
-    <div class="movie-card">
+<p>
+Developed by <b>Gaurav Warkhede</b>
+</p>
 
-    <h2>⚡ Fast</h2>
-
-    Get recommendations in less than a second using
-    Cosine Similarity and NLP.
-
-    </div>
-    """,unsafe_allow_html=True)
-
-with feature2:
-
-    st.markdown("""
-    <div class="movie-card">
-
-    <h2>🧠 AI Powered</h2>
-
-    Uses Natural Language Processing to understand
-    movie content instead of ratings.
-
-    </div>
-    """,unsafe_allow_html=True)
-
-with feature3:
-
-    st.markdown("""
-    <div class="movie-card">
-
-    <h2>🎬 Huge Collection</h2>
-
-    Discover thousands of movies instantly.
-
-    </div>
-    """,unsafe_allow_html=True)
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# POPULAR GENRES
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-🔥 Explore Genres
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-genre1,genre2,genre3,genre4,genre5=st.columns(5)
-
-genre1.success("🎭 Drama")
-genre2.info("🚀 Sci-Fi")
-genre3.warning("⚔️ Action")
-genre4.success("😂 Comedy")
-genre5.info("🧙 Fantasy")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# HOW IT WORKS
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-🧠 How Recommendations Work
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-st.markdown("""
-
-1️⃣ Movie selected by user
-
-⬇️
-
-2️⃣ Tags are converted into vectors
-
-⬇️
-
-3️⃣ Cosine Similarity compares all movies
-
-⬇️
-
-4️⃣ Top 5 similar movies are selected
-
-⬇️
-
-5️⃣ Recommendations displayed instantly
-
-""")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# RANDOM MOVIE FACT
-# ==========================================================
-
-facts=[
-"The average movie contains over 1000 spoken words.",
-"More than 5000 movies are available in this recommendation system.",
-"Cosine Similarity measures the angle between vectors.",
-"NLP helps computers understand text.",
-"Recommendation systems are used by Netflix, Amazon and Spotify.",
-"Machine Learning powers many modern streaming platforms."
-]
-
-st.info("💡 Movie Fact")
-
-st.success(np.random.choice(facts))
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# TECHNOLOGY BADGES
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-🛠 Technologies Used
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-tech1,tech2,tech3,tech4,tech5=st.columns(5)
-
-tech1.code("Python")
-
-tech2.code("Streamlit")
-
-tech3.code("Scikit-Learn")
-
-tech4.code("NLP")
-
-tech5.code("Pickle")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# DEVELOPER SECTION
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-👨‍💻 Developer
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-st.markdown("""
-<div class="movie-card">
-
-<h1>GAURAV WARKHEDE</h1>
-
-AI & Machine Learning Engineer
-
-Python • Machine Learning • NLP • Streamlit
-
-Building projects that combine Artificial Intelligence
-with beautiful user experiences.
+<p>
+© {current_year} All Rights Reserved.
+</p>
 
 </div>
-""",unsafe_allow_html=True)
-
-st.write("")
-st.write("")
-st.write("")
+""",
+unsafe_allow_html=True
+)
 
 # ==========================================================
-# FUTURE UPDATES
+# BALLOONS
 # ==========================================================
 
-with st.expander("🚀 Upcoming Features"):
-
-    st.write("✅ Real Movie Posters")
-    st.write("✅ Movie Trailers")
-    st.write("✅ TMDB API")
-    st.write("✅ User Login")
-    st.write("✅ Watchlist")
-    st.write("✅ Favorites")
-    st.write("✅ Movie Ratings")
-    st.write("✅ AI Chatbot")
-    st.write("✅ Voice Search")
-    st.write("✅ Deploy on Streamlit Cloud")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# FINAL FOOTER
-# ==========================================================
-
-st.markdown("""
-<hr>
-<center>
-
-<h2>🎬 Movie Recommendation AI</h2>
-
-Built using ❤️ Streamlit, NLP & Machine Learning
-
-<br>
-
-© 2026
-
-<br>
-
-<b>Developed By Gaurav Warkhede</b>
-
-</center>
-""",unsafe_allow_html=True)
-
-# ==========================================================
-# WELCOME MESSAGE
-# ==========================================================
-
-if "welcome" not in st.session_state:
+if recommend_button:
     st.balloons()
-    st.session_state.welcome=True
 
-# ==========================================================
-# PROJECT ACHIEVEMENTS
-# ==========================================================
 
-st.write("")
-st.write("")
-st.write("")
 
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-🏆 Project Highlights
-</h2>
-""",
-unsafe_allow_html=True
-)
 
-a,b,c,d=st.columns(4)
-
-with a:
-    st.success("🎬 4806 Movies")
-
-with b:
-    st.success("🤖 NLP Based")
-
-with c:
-    st.success("⚡ Fast Recommendation")
-
-with d:
-    st.success("🎨 Premium UI")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# USER FEEDBACK
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-⭐ Rate This Project
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-rating=st.slider(
-"How would you rate this project?",
-1,
-5,
-5
-)
-
-if rating>=4:
-    st.success("Thank you for your feedback ❤️")
-else:
-    st.warning("Thanks! Future versions will be even better.")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# SOCIAL LINKS
-# ==========================================================
-
-st.markdown(
-"""
-<h2 style='text-align:center;'>
-🌐 Connect With Me
-</h2>
-""",
-unsafe_allow_html=True
-)
-
-col1,col2,col3=st.columns(3)
-
-with col1:
-    st.markdown(
-    """
-    ### 💻 GitHub
-
-    Add your GitHub profile here.
-    """
-    )
-
-with col2:
-    st.markdown(
-    """
-    ### 🔗 LinkedIn
-
-    Add your LinkedIn profile here.
-    """
-    )
-
-with col3:
-    st.markdown(
-    """
-    ### 📧 Email
-
-    your_email@example.com
-    """
-    )
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# PROJECT INFO
-# ==========================================================
-
-with st.expander("📄 Project Information"):
-
-    st.write("Project Name : Movie Recommendation AI")
-
-    st.write("Developer : Gaurav Warkhede")
-
-    st.write("Language : Python")
-
-    st.write("Framework : Streamlit")
-
-    st.write("Machine Learning : NLP")
-
-    st.write("Recommendation Engine : Cosine Similarity")
-
-    st.write("Dataset Size : 4806 Movies")
-
-    st.write("Deployment : Streamlit Community Cloud")
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# DISCLAIMER
-# ==========================================================
-
-st.info(
-"""
-This project was created for educational and portfolio
-purposes.
-
-Movie recommendations are generated using
-Natural Language Processing and Cosine Similarity.
-"""
-)
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# THANK YOU
-# ==========================================================
-
-st.markdown(
-"""
-<div class="glass">
-
-<h1 style="text-align:center;">
-❤️ Thank You For Visiting
-</h1>
-
-<h3 style="text-align:center;">
-Movie Recommendation AI
-</h3>
-
-<p style="text-align:center;">
-
-Built with Python, Streamlit and Machine Learning.
-
-</p>
-
-<p style="text-align:center;">
-
-Developed by
-
-</p>
-
-<h2 style="text-align:center; color:#E50914;">
-
-GAURAV WARKHEDE
-
-</h2>
-
-<p style="text-align:center;">
-
-Keep Learning • Keep Building • Keep Growing 🚀
-
-</p>
-
-</div>
-""",
-unsafe_allow_html=True
-)
-
-st.write("")
-st.write("")
-st.write("")
-
-# ==========================================================
-# END
-# ==========================================================
-
-st.markdown(
-"""
-<hr>
-
-<center>
-
-Made with ❤️ using Python, Streamlit & Machine Learning
-
-<br>
-
-<b>© 2026 Gaurav Warkhede</b>
-
-</center>
-""",
-unsafe_allow_html=True
-)
