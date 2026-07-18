@@ -3,7 +3,8 @@
 A **Content-Based Movie Recommendation System** built using **Python**, **Natural Language Processing (NLP)**, **Scikit-learn**, and **Streamlit**.
 
 ## 📌 Overview
-
+### link for the app
+https://moviesrecommendationsystem-ejzzseu6xqjvedr9txnjkz.streamlit.app/
 This project recommends movies based on their content by analyzing:
 
 - 🎭 Genres
